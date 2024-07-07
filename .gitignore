@@ -1,0 +1,42 @@
+# Operating system specific temporary files
+*.swp
+*.log
+*.pid
+
+# IDE specific files
+# (adjust based on your IDE)
+*.sln
+*.suo
+*.user
+*.VCproj.*
+*.xcworkspace
+
+# Build artifacts
+/build/
+/dist/
+/target/
+
+# Editor temporary/cache files
+*.pyc
+*.class
+
+# Version control artifacts
+.git/
+.svn/
+.DS_Store
+
+# Local environment configuration
+.env*
+
+# Ignore npm package-lock.json or yarn.lock
+package-lock.json
+yarn.lock
+
+# Ignore test coverage reports
+coverage/
+
+# Ignore documentation build output
+docs/
+
+# End-of-line character files
+*.{CR,LF}
