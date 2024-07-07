@@ -1,5 +1,3 @@
-# secops_llama_agents.py
-
 import os
 import re
 import scapy.all as scapy
