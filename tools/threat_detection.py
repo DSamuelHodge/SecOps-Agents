@@ -1,138 +1,137 @@
-# This Python script defines classes for threat detection using Yara rules.
-# It includes sample Yara rules for various threat categories and demonstrates
-# threat analysis with a ThreatAnalyzer class.
-
 import yara
-from typing import List, Dict, Any, Tuple, Union
-from dataclasses import dataclass, field
+from typing import Union, Dict, Any, List
+from .yara_rules import YaraRules
+from .suricata_integration import SuricataIntegration
 
-
-@dataclass
-class YaraMatch:
-    rule: str
-    namespace: str
-    tags: List[str]
-    description: str
-    strings: List[str] = field(default_factory=list)
-
-class YaraRules:
-    RULES = """
-    rule potential_malware {
-        meta:
-            description = "Detects potential malware indicators"
-        strings:
-            $suspicious_func1 = "CreateRemoteThread" nocase
-            $suspicious_func2 = "VirtualAlloc" nocase
-            $suspicious_func3 = "WriteProcessMemory" nocase
-            $encoded_command = /powershell\.exe.*-enc/
-            $shellcode = {90 90 90 90}  // NOP sled
-        condition:
-            2 of ($suspicious_func*) or $encoded_command or $shellcode
-    }
-
-    rule suspicious_network_activity {
-        meta:
-            description = "Detects suspicious network communication patterns"
-        strings:
-            $http_request = /POST.*\.php HTTP\/1\.(0|1)/
-            $unusual_dns = /\.bit$|\.dd$|\.eu\.org$/
-            $tor_address = /\.onion$/
-            $ip_literal = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/
-        condition:
-            any of them
-    }
-
-    rule potential_data_exfiltration {
-        meta:
-            description = "Detects patterns that might indicate data exfiltration"
-        strings:
-            $base64_data = /[A-Za-z0-9+\/]{50,}={0,2}/
-            $hex_data = /[0-9A-Fa-f]{50,}/
-            $compressed_data = /(gzip|deflate|compress|zip|rar)/
-        condition:
-            any of them and filesize > 1MB
-    }
-
-    rule ransomware_indicators {
-        meta:
-            description = "Detects common ransomware indicators"
-        strings:
-            $ransom_note = "Your files have been encrypted" nocase wide ascii
-            $bitcoin = "bitcoin" nocase
-            $file_extension = /\.encrypted$|\.locked$|\.crypted$/
-        condition:
-            2 of them
-    }
-
-    rule credential_harvesting {
-        meta:
-            description = "Detects potential credential harvesting attempts"
-        strings:
-            $password_regex = /password\s*=\s*['"][^'"]{6,}['"]/ nocase
-            $api_key_regex = /api[_-]?key\s*=\s*['"][0-9a-zA-Z]{32,}['"]/ nocase
-            $ssh_key = "BEGIN RSA PRIVATE KEY" wide ascii
-        condition:
-            any of them
-    }
-    """
 
 class ThreatDetector:
     def __init__(self):
-        self.rules = yara.compile(source=YaraRules.RULES)
+        self.yara_rules = YaraRules()
+        self.yara_rules.add_rule_string(YaraRules.EXAMPLE_RULES)
+        self.compile_rules()
+        self.suricata = SuricataIntegration()
 
-    def detect_threats(self, data: Union[str, bytes]) -> List[YaraMatch]:
+    def compile_rules(self):
+        self.yara_rules.compile_rules()
+        if self.yara_rules.get_compiled_rules() is None:
+            raise RuntimeError("Failed to compile YARA rules")
+
+    def detect_threats(
+        self, data: Union[str, bytes], timeout: int = 60
+    ) -> List[yara.Match]:
         if isinstance(data, str):
-            data = data.encode('utf-8')
-
-        matches = self.rules.match(data=data)
-        return [self._process_match(match) for match in matches]
-
-    def _process_match(self, match: yara.Match) -> YaraMatch:
-        string_matches = []
-        for string_match in match.strings:
-            for instance in string_match.instances:
-                match_info = (
-                    f"{string_match.identifier}: "
-                    f"{instance.matched_data.decode('utf-8', errors='ignore')} "
-                    f"at offset {instance.offset}"
-                )
-                if string_match.is_xor():
-                    match_info += f" (XOR key: {instance.xor_key})"
-                string_matches.append(match_info)
-
-        return YaraMatch(
-            rule=match.rule,
-            namespace=match.namespace,
-            tags=match.tags,
-            description=match.meta.get("description", "No description provided"),
-            strings=string_matches
+            data = data.encode("utf-8")
+        return self.yara_rules.get_compiled_rules().match(
+            data=data, timeout=timeout, callback=self._yara_callback
         )
+
+    def detect_threats_with_suricata(self, pcap_file: str) -> Dict[str, Any]:
+        with open(pcap_file, "rb") as f:
+            yara_threats = self.detect_threats(f.read())
+        suricata_analysis = self.suricata.analyze_pcap(pcap_file)
+        return {"yara_threats": yara_threats, "suricata_analysis": suricata_analysis}
+
+    @staticmethod
+    def _yara_callback(data):
+        print(f"Scanning rule: {data['rule']}")
+        print(
+            f"Rule '{data['rule']}' {'matched' if data['matches'] else 'did not match'}"
+        )
+        return yara.CALLBACK_CONTINUE
+
 
 class ThreatAnalyzer:
     def __init__(self):
-        self.detector = ThreatDetector()
+        try:
+            self.detector = ThreatDetector()
+        except RuntimeError as e:
+            print(f"Failed to initialize ThreatDetector: {e}")
+            self.detector = None
 
-    def analyze_threats(self, data: Union[str, bytes]) -> str:
-        threats = self.detector.detect_threats(data)
+    def analyze_threats(self, data: Union[str, bytes], timeout: int = 60) -> str:
+        if self.detector is None:
+            return "Threat analysis is unavailable due to initialization error."
 
+        threats = self.detector.detect_threats(data, timeout=timeout)
+        return self._format_yara_analysis(threats)
+
+    def analyze_pcap(self, pcap_file: str) -> str:
+        if self.detector is None:
+            return "Threat analysis is unavailable due to initialization error."
+
+        results = self.detector.detect_threats_with_suricata(pcap_file)
+
+        analysis = "Threat Analysis Report (PCAP)\n"
+        analysis += "=" * 30 + "\n\n"
+
+        analysis += "YARA Analysis:\n"
+        analysis += "-" * 20 + "\n"
+        analysis += self._format_yara_analysis(results["yara_threats"])
+
+        analysis += "Suricata Analysis:\n"
+        analysis += "-" * 20 + "\n"
+        analysis += str(results["suricata_analysis"])
+        analysis += "\n"
+
+        return analysis
+
+    def _format_yara_analysis(self, threats: List[yara.Match]) -> str:
         if not threats:
-            return "No threats detected."
+            return "No threats detected.\n"
 
-        analysis = "Threat Analysis Report\n"
-        analysis += "=" * 25 + "\n\n"
-
+        analysis = ""
         for threat in threats:
             analysis += f"Rule Triggered: {threat.rule}\n"
             analysis += f"Namespace: {threat.namespace}\n"
             analysis += f"Tags: {', '.join(threat.tags)}\n"
-            analysis += f"Description: {threat.description}\n"
+            analysis += "Metadata:\n"
+            for key, value in threat.meta.items():
+                analysis += f"  {key}: {value}\n"
             analysis += "Matched Strings:\n"
             for string in threat.strings:
-                analysis += f"  - {string}\n"
+                analysis += f"  - Identifier: {string.identifier}\n"
+                analysis += f"    Data: {string.string}\n"
+                analysis += f"    Offset: {string.instances[0].offset}\n"
             analysis += "\n"
 
         analysis += f"Total threats detected: {len(threats)}\n"
         return analysis
 
+
 if __name__ == "__main__":
-    ThreatAnalyzer()
+    analyzer = ThreatAnalyzer()
+
+    # # Example usage with a string
+    # test_data = "This is a test string with potential threat content."
+    # result = analyzer.analyze_threats(test_data)
+    # print(result)
+
+    # # Example usage with a PCAP file
+    # pcap_file = "path/to/your/capture.pcap"
+    # result = analyzer.analyze_pcap(pcap_file)
+    # print(result)
+
+    # Example usage with YARA rules
+    # test_data = """
+    # CreateRemoteThread VirtualAllocEx
+    # powershell.exe -e TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    # System32\\cmd.exe
+    # """
+
+    # result = analyzer.analyze_threats(test_data)
+    # print(result)
+
+    # Traceback (most recent call last):
+    #   File "/Users/argosmacdevelopmentsystem/Desktop/SecOps-Agents/tools/threat_detection.py", line 185, in <module>
+    #     result = analyzer.analyze_threats(test_data)
+    #              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #   File "/Users/argosmacdevelopmentsystem/Desktop/SecOps-Agents/tools/threat_detection.py", line 138, in analyze_threats
+    #     threats = self.detector.detect_threats(
+    #               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #   File "/Users/argosmacdevelopmentsystem/Desktop/SecOps-Agents/tools/threat_detection.py", line 73, in detect_threats
+    #     return [self._process_match(match) for match in matches]
+    #             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    #   File "/Users/argosmacdevelopmentsystem/Desktop/SecOps-Agents/tools/threat_detection.py", line 96, in _process_match
+    #     "data": string.data,
+    #             ^^^^^^^^^^^
+    # AttributeError: 'yara.StringMatch' object has no attribute 'data'

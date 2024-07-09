@@ -3,18 +3,15 @@
 # HTTP methods, and DNS queries. It also generates a report summarizing the analysis.
 
 import asyncio
-import ipaddress
-import scapy.all as scapy
-from scapy.all import AsyncSniffer, sniff
+from scapy.all import AsyncSniffer
 from collections import defaultdict
 from scapy.layers.http import HTTP
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.dns import DNS
-from typing import List, Dict, Any, Tuple, Union
-from utils.utils import (select_default_interface,
-                   print_interface_info, 
-                   scan_network, 
-                   print_scan_results)
+from typing import List, Dict, Any
+from .interface_manager import select_default_interface, print_interface_info
+from .network_scanner import scan_network, print_scan_results
+
 
 class PacketAnalyzer:
     def __init__(self):
@@ -46,7 +43,7 @@ class PacketAnalyzer:
         if TCP in packet:
             self._analyze_tcp_packet(packet)
         elif UDP in packet:
-            self.protocol_counter['UDP'] += 1
+            self.protocol_counter["UDP"] += 1
 
         if HTTP in packet:
             self._analyze_http_packet(packet)
@@ -54,19 +51,19 @@ class PacketAnalyzer:
             self._analyze_dns_packet(packet)
 
     def _analyze_tcp_packet(self, packet):
-        self.protocol_counter['TCP'] += 1
+        self.protocol_counter["TCP"] += 1
         if packet[TCP].dport == 80 or packet[TCP].sport == 80:
-            self.protocol_counter['HTTP'] += 1
+            self.protocol_counter["HTTP"] += 1
         elif packet[TCP].dport == 443 or packet[TCP].sport == 443:
-            self.protocol_counter['HTTPS'] += 1
+            self.protocol_counter["HTTPS"] += 1
 
     def _analyze_http_packet(self, packet):
-        if hasattr(packet[HTTP], 'Method'):
+        if hasattr(packet[HTTP], "Method"):
             self.http_methods[packet[HTTP].Method.decode()] += 1
 
     def _analyze_dns_packet(self, packet):
         if packet[DNS].qr == 0 and packet[DNS].qd:
-            query = packet[DNS].qd.qname.decode('utf-8')
+            query = packet[DNS].qd.qname.decode("utf-8")
             self.dns_queries[query] += 1
 
     def generate_report(self) -> str:
@@ -74,7 +71,7 @@ class PacketAnalyzer:
         report = [
             "Network Traffic Analysis Report",
             "=" * 40,
-            f"Total packets captured: {packet_count}\n"
+            f"Total packets captured: {packet_count}\n",
         ]
 
         report.extend(self._generate_protocol_distribution(packet_count))
@@ -92,7 +89,9 @@ class PacketAnalyzer:
 
     def _generate_top_ip_addresses(self) -> List[str]:
         report = ["\nTop 5 IP Addresses:"]
-        for ip, count in sorted(self.ip_counter.items(), key=lambda x: x[1], reverse=True)[:5]:
+        for ip, count in sorted(
+            self.ip_counter.items(), key=lambda x: x[1], reverse=True
+        )[:5]:
             report.append(f"  {ip}: {count} packets")
         return report
 
@@ -108,19 +107,26 @@ class PacketAnalyzer:
         if not self.dns_queries:
             return []
         report = ["\nTop 5 DNS Queries:"]
-        for query, count in sorted(self.dns_queries.items(), key=lambda x: x[1], reverse=True)[:5]:
+        for query, count in sorted(
+            self.dns_queries.items(), key=lambda x: x[1], reverse=True
+        )[:5]:
             report.append(f"  {query}: {count}")
         return report
 
-async def run_network_analysis(duration: int = 10, interface: str = None) -> Dict[str, Any]:
+
+async def run_network_analysis(
+    duration: int = 10, interface: str = None
+) -> Dict[str, Any]:
     if interface is None:
         interface = select_default_interface()
-    
+
     print(f"Capturing packets on interface {interface} for {duration} seconds...")
 
     analyzer = PacketAnalyzer()
 
-    capture_thread = AsyncSniffer(iface=interface, prn=analyzer.packet_callback, store=False)
+    capture_thread = AsyncSniffer(
+        iface=interface, prn=analyzer.packet_callback, store=False
+    )
     capture_thread.start()
 
     await asyncio.sleep(duration)
@@ -129,51 +135,26 @@ async def run_network_analysis(duration: int = 10, interface: str = None) -> Dic
     print(f"Capture complete. Analyzing {len(analyzer.packets)} packets...")
 
     analyzer.analyze_packets()
-    return analyzer.generate_report()
+    return {"report": analyzer.generate_report(), "packet_count": len(analyzer.packets)}
 
-def sync_analyze_network_traffic(duration: int = 10, interface: str = "en0") -> str:
-    print(f"Capturing packets on interface {interface} for {duration} seconds...")
-
-    analyzer = PacketAnalyzer()
-    packets = scapy.sniff(iface=interface, timeout=duration)
-
-    print(f"Capture complete. Analyzing {len(packets)} packets...")
-
-    analyzer.packets = packets
-    analyzer.analyze_packets()
-    return analyzer.generate_report()
-
-async def run_network_analysis(duration: int = 10, interface: str = "en0") -> Dict[str, Any]:
-    print(f"Capturing packets on interface {interface} for {duration} seconds...")
-
-    analyzer = PacketAnalyzer()
-
-    capture_thread = AsyncSniffer(iface=interface, prn=analyzer.packet_callback, store=False)
-    capture_thread.start()
-
-    await asyncio.sleep(duration)
-    capture_thread.stop()
-
-    print(f"Capture complete. Analyzing {len(analyzer.packets)} packets...")
-
-    analyzer.analyze_packets()
-    return {
-        "report": analyzer.generate_report(),
-        "packet_count": len(analyzer.packets)
-    }
 
 if __name__ == "__main__":
+
     async def main():
         default_interface = print_interface_info()
         if default_interface:
             try:
                 # Perform network scan
                 print("Performing network scan...")
-                scan_results = scan_network('192.168.1.0/24')  # Adjust this to your network range
+                scan_results = scan_network(
+                    "192.168.1.0/24"
+                )  # Adjust this to your network range
                 print_scan_results(scan_results)
 
                 # Run packet analysis
-                analysis_result = await run_network_analysis(duration=30, interface=default_interface)
+                analysis_result = await run_network_analysis(
+                    duration=30, interface=default_interface
+                )
                 print(analysis_result["report"])
             except RuntimeError as e:
                 print(f"Error: {e}")
